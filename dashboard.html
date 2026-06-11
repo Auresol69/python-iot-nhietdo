@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>IoT Room Monitoring Dashboard</title>
+
+```
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+    *{
+        margin:0;
+        padding:0;
+        box-sizing:border-box;
+    }
+
+    body{
+        font-family:Arial, sans-serif;
+        background:#0d1117;
+        color:white;
+        text-align:center;
+        padding:20px;
+    }
+
+    h1{
+        color:#00ffd5;
+        margin-bottom:30px;
+    }
+
+    .container{
+        display:flex;
+        justify-content:center;
+        gap:20px;
+        flex-wrap:wrap;
+    }
+
+    .card{
+        background:#161b22;
+        width:280px;
+        padding:20px;
+        border-radius:15px;
+        box-shadow:0 0 10px rgba(0,255,200,0.2);
+    }
+
+    .card h2{
+        margin-bottom:15px;
+    }
+
+    .value{
+        font-size:50px;
+        font-weight:bold;
+    }
+
+    .status{
+        font-size:25px;
+    }
+
+    .connected{
+        color:#00ff88;
+    }
+
+    .disconnected{
+        color:red;
+    }
+
+    .chart-container{
+        width:90%;
+        max-width:1000px;
+        margin:40px auto;
+        background:#161b22;
+        padding:20px;
+        border-radius:15px;
+    }
+
+    canvas{
+        width:100% !important;
+        height:400px !important;
+    }
+
+    #updateTime{
+        margin-top:10px;
+        color:#cccccc;
+    }
+</style>
+```
+
+</head>
+
+<body>
+
+```
+<h1>🌡 ROOM MONITORING DASHBOARD</h1>
+
+<div class="container">
+
+    <div class="card">
+        <h2>Temperature</h2>
+        <div class="value" id="temp">--</div>
+    </div>
+
+    <div class="card">
+        <h2>Humidity</h2>
+        <div class="value" id="humid">--</div>
+    </div>
+
+    <div class="card">
+        <h2>MQTT Status</h2>
+        <div class="status disconnected" id="status">
+            Disconnected
+        </div>
+        <div id="updateTime">
+            Last Update: --
+        </div>
+    </div>
+
+</div>
+
+<div class="chart-container">
+    <canvas id="sensorChart"></canvas>
+</div>
+
+<script>
+
+    let tempData = [];
+    let humidData = [];
+    let labels = [];
+
+    const ctx =
+        document.getElementById("sensorChart")
+        .getContext("2d");
+
+    const chart = new Chart(ctx,{
+        type:'line',
+        data:{
+            labels:labels,
+            datasets:[
+                {
+                    label:'Temperature (°C)',
+                    data:tempData,
+                    borderColor:'red',
+                    tension:0.3
+                },
+                {
+                    label:'Humidity (%)',
+                    data:humidData,
+                    borderColor:'cyan',
+                    tension:0.3
+                }
+            ]
+        },
+        options:{
+            responsive:true,
+            scales:{
+                y:{
+                    beginAtZero:true
+                }
+            }
+        }
+    });
+
+    // =====================
+    // MQTT CONNECT
+    // =====================
+
+    const client =
+        mqtt.connect(
+            'wss://broker.hivemq.com:8884/mqtt'
+        );
+
+    client.on('connect', () => {
+
+        console.log("MQTT Connected");
+
+        document
+            .getElementById("status")
+            .innerHTML = "Connected";
+
+        document
+            .getElementById("status")
+            .className =
+            "status connected";
+
+        client.subscribe("iot_python/room/temperature");
+        client.subscribe("iot_python/room/humidity");
+
+    });
+
+    client.on('error', () => {
+
+        document
+            .getElementById("status")
+            .innerHTML =
+            "Disconnected";
+
+        document
+            .getElementById("status")
+            .className =
+            "status disconnected";
+
+    });
+
+    let currentTemp = null;
+    let currentHumid = null;
+
+    client.on('message',
+        (topic, message) => {
+
+        const value =
+            parseFloat(
+                message.toString()
+            );
+
+        if(topic === "iot_python/room/temperature"){
+
+            currentTemp = value;
+
+            document
+                .getElementById("temp")
+                .innerHTML =
+                value.toFixed(1) + " °C";
+
+            if(value >= 35){
+
+                document
+                    .getElementById("temp")
+                    .style.color =
+                    "red";
+
+            }else{
+
+                document
+                    .getElementById("temp")
+                    .style.color =
+                    "#00ffd5";
+            }
+        }
+
+        if(topic === "iot_python/room/humidity"){
+
+            currentHumid = value;
+
+            document
+                .getElementById("humid")
+                .innerHTML =
+                value.toFixed(1) + " %";
+        }
+
+        if(
+            currentTemp !== null &&
+            currentHumid !== null
+        ){
+
+            const now =
+                new Date()
+                .toLocaleTimeString();
+
+            document
+                .getElementById("updateTime")
+                .innerHTML =
+                "Last Update: " + now;
+
+            labels.push(now);
+            tempData.push(currentTemp);
+            humidData.push(currentHumid);
+
+            if(labels.length > 20){
+
+                labels.shift();
+                tempData.shift();
+                humidData.shift();
+            }
+
+            chart.update();
+        }
+
+    });
+
+</script>
+```
+
+</body>
+</html>
