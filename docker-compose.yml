@@ -1,0 +1,88 @@
+version: '3.8'
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:latest
+    container_name: iot-mosquitto
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+    restart: unless-stopped
+    networks:
+      - iot_network
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -h localhost -t '$$SYS/broker/version' -C 1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: iot-sqlserver
+    environment:
+      ACCEPT_EULA: "Y"
+      SA_PASSWORD: "${MSSQL_SA_PASSWORD}"
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+    restart: unless-stopped
+    networks:
+      - iot_network
+    healthcheck:
+      test: ["CMD", "/opt/mssql-tools18/bin/sqlcmd", "-S", "localhost", "-U", "sa", "-P", "${MSSQL_SA_PASSWORD}", "-Q", "SELECT 1", "-No"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  redis:
+    image: redis:alpine
+    container_name: iot-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    networks:
+      - iot_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  backend:
+    build:
+      context: ./Backend
+      dockerfile: Dockerfile
+    container_name: iot-backend
+    ports:
+      - "8080:8080"
+    environment:
+      ConnectionStrings__SqlServer: "Server=sqlserver,1433;User Id=sa;Password=${MSSQL_SA_PASSWORD};Database=IotDb;TrustServerCertificate=True;Connection Timeout=30;"
+      ConnectionStrings__Redis: "redis:6379"
+      ConnectionStrings__Mosquitto: "mosquitto" # Chỉ cần tên host là đủ cho MQTTnet
+      ASPNETCORE_ENVIRONMENT: "Production"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mosquitto:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - iot_network
+
+volumes:
+  mosquitto_data:
+    driver: local
+  mosquitto_log:
+    driver: local
+  sqlserver_data:
+    driver: local
+
+networks:
+  iot_network:
+    driver: bridge
