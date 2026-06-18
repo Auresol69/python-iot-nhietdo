@@ -1,0 +1,23 @@
+# Bỏ qua các file build và thư mục tạm
+bin/
+obj/
+*.user
+*.suo
+
+# Bỏ qua Git
+.git
+.gitignore
+
+# Bỏ qua Docker
+.dockerignore
+Dockerfile
+docker-compose.yml
+
+# Bỏ qua file cấu hình môi trường local (quan trọng để bảo mật)
+.env
+appsettings.Development.json
+
+# Bỏ qua các thư mục khác (tùy dự án)
+.vs/
+.vscode/
+node_modules/

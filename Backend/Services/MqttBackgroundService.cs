@@ -51,8 +51,10 @@ namespace Backend.Services
                 .WithCleanSession()
                 .Build();
 
-            // Set up message handler
+            // Set up message handlers
             _mqttClient.ApplicationMessageReceivedAsync += HandleMessageReceivedAsync;
+            _mqttClient.ConnectedAsync += HandleConnectedAsync;
+            _mqttClient.DisconnectedAsync += HandleDisconnectedAsync;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -70,13 +72,14 @@ namespace Backend.Services
                         var result = await _mqttClient.ConnectAsync(_mqttClientOptions, stoppingToken);
                         _logger.LogInformation("Connected successfully. Result: {ResultCode}", result.ResultCode);
 
-                        // Subscribe to wildcard topic: iot/devices/+/metrics
+                        // Subscribe to metric topics: iot/devices/+/metrics
                         var subscribeOptions = _mqttFactory.CreateSubscribeOptionsBuilder()
                             .WithTopicFilter(f => f.WithTopic("iot/devices/+/metrics"))
+                            .WithTopicFilter(f => f.WithTopic("iot/devices/+/lwt"))  // LWT Topic
                             .Build();
 
                         await _mqttClient.SubscribeAsync(subscribeOptions, stoppingToken);
-                        _logger.LogInformation("Subscribed to wildcard topic: iot/devices/+/metrics");
+                        _logger.LogInformation("Subscribed to topics: iot/devices/+/metrics and iot/devices/+/lwt");
                     }
                 }
                 catch (Exception ex)
@@ -104,25 +107,40 @@ namespace Backend.Services
 
             _logger.LogInformation("Received MQTT message on topic: {Topic}. Payload: {Payload}", topic, payloadString);
 
-            // Parse Topic: iot/devices/{deviceCode}/metrics
+            // Parse Topic: iot/devices/{deviceCode}/{messageType}
             var topicParts = topic.Split('/');
             if (topicParts.Length != 4 ||
                 !string.Equals(topicParts[0], "iot", StringComparison.OrdinalIgnoreCase) ||
-                !string.Equals(topicParts[1], "devices", StringComparison.OrdinalIgnoreCase) ||
-                !string.Equals(topicParts[3], "metrics", StringComparison.OrdinalIgnoreCase))
+                !string.Equals(topicParts[1], "devices", StringComparison.OrdinalIgnoreCase))
             {
                 _logger.LogWarning("Skipping message. Topic format is invalid: {Topic}", topic);
                 return;
             }
 
             var deviceCode = topicParts[2];
+            var messageType = topicParts[3];
+
             if (string.IsNullOrWhiteSpace(deviceCode))
             {
                 _logger.LogWarning("Skipping message. DeviceCode is empty in topic: {Topic}", topic);
                 return;
             }
 
-            // Parse JSON Payload
+            // Handle LWT (Last Will and Testament) messages
+            if (string.Equals(messageType, "lwt", StringComparison.OrdinalIgnoreCase))
+            {
+                await HandleLwtMessageAsync(deviceCode);
+                return;
+            }
+
+            // Handle Metrics messages
+            if (!string.Equals(messageType, "metrics", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogWarning("Skipping message. Unknown message type: {MessageType}", messageType);
+                return;
+            }
+
+            // Parse JSON Payload for metrics
             MqttMetricPayload? payload;
             try
             {
@@ -186,6 +204,14 @@ namespace Backend.Services
                             }
                         }
                     }
+                    else if (!device.IsOnline)
+                    {
+                        // Device came back online
+                        device.IsOnline = true;
+                        dbContext.Devices.Update(device);
+                        await dbContext.SaveChangesAsync();
+                        _logger.LogInformation("Device {DeviceCode} is now ONLINE", deviceCode);
+                    }
 
                     // Add new metric record
                     var metric = new SensorMetric
@@ -209,6 +235,49 @@ namespace Backend.Services
                     _logger.LogError(ex, "Error saving sensor metrics to database for device {DeviceCode}", deviceCode);
                 }
             }
+        }
+
+        private async Task HandleLwtMessageAsync(string deviceCode)
+        {
+            _logger.LogWarning("Received LWT message for device {DeviceCode}. Marking as OFFLINE...", deviceCode);
+
+            using (var scope = _scopeFactory.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+                try
+                {
+                    var device = await dbContext.Devices
+                        .FirstOrDefaultAsync(d => d.DeviceCode == deviceCode);
+
+                    if (device != null && device.IsOnline)
+                    {
+                        device.IsOnline = false;
+                        dbContext.Devices.Update(device);
+                        await dbContext.SaveChangesAsync();
+                        _logger.LogInformation("Device {DeviceCode} is now OFFLINE", deviceCode);
+
+                        // Notify connected clients
+                        await _hubContext.Clients.All.SendAsync("DeviceOffline", deviceCode);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error updating device status for LWT message: {DeviceCode}", deviceCode);
+                }
+            }
+        }
+
+        private async Task HandleConnectedAsync(MqttClientConnectedEventArgs args)
+        {
+            _logger.LogInformation("MQTT Client connected successfully.");
+            return;
+        }
+
+        private async Task HandleDisconnectedAsync(MqttClientDisconnectedEventArgs args)
+        {
+            _logger.LogWarning("MQTT Client disconnected. Reason: {Reason}", args.Reason);
+            return;
         }
 
         public override async Task StopAsync(CancellationToken cancellationToken)

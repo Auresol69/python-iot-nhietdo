@@ -8,7 +8,13 @@ var builder = WebApplication.CreateBuilder(args);
 // Get SqlServer Connection String
 var connectionString = builder.Configuration.GetConnectionString("SqlServer");
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(connectionString));
+    options.UseSqlServer(connectionString, SqlOptions =>
+    {
+        SqlOptions.EnableRetryOnFailure(
+            maxRetryCount: 10,
+            maxRetryDelay: TimeSpan.FromSeconds(5),
+            errorNumbersToAdd: null);
+    }));
 
 // Register MQTT Background Service as a Hosted Service
 builder.Services.AddHostedService<MqttBackgroundService>();
@@ -45,5 +51,12 @@ app.MapControllers();
 
 // Map SignalR Hub
 app.MapHub<SensorHub>("/hubs/sensor");
+
+using (var scope = app.Services.CreateScope())
+{
+    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    // Lệnh này sẽ tự động tạo bảng nếu chưa có
+    dbContext.Database.Migrate();
+}
 
 app.Run();

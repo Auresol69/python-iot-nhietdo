@@ -16,6 +16,29 @@ namespace Backend.Controllers
         }
 
         /// <summary>
+        /// Get all devices with their latest sensor metrics.
+        /// </summary>
+        /// <returns>List of all devices with basic info</returns>
+        [HttpGet("devices")]
+        public async Task<ActionResult<IEnumerable<object>>> GetAllDevices()
+        {
+            var devices = await _context.Devices
+                .Select(d => new
+                {
+                    d.Id,
+                    d.DeviceCode,
+                    d.Name,
+                    d.IsOnline,
+                    d.IsVirtual,
+                    d.CreatedAt,
+                    MetricsCount = d.SensorMetrics.Count
+                })
+                .ToListAsync();
+
+            return Ok(devices);
+        }
+
+        /// <summary>
         /// Get the latest 50 sensor metrics for a specific device by device code.
         /// </summary>
         /// <param name="deviceCode">The device code to query</param>
