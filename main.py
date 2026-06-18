@@ -3,6 +3,7 @@ import dht
 import network
 import time
 import urequests
+import ujson
 from umqtt.simple import MQTTClient
 
 # =========================
@@ -31,8 +32,7 @@ MQTT_BROKER = "broker.hivemq.com"
 MQTT_PORT = 1883
 MQTT_USER = ""
 MQTT_PASSWORD = ""
-MQTT_TOPIC_TEMP = "iot_python/room/temperature"
-MQTT_TOPIC_HUMID = "iot_python/room/humidity"
+MQTT_TOPIC_METRICS = "iot/devices/esp32-phong-may-1/metrics"
 
 # =========================
 # MQTT CONNECT
@@ -79,8 +79,8 @@ while True:
         sensor.measure()
         time.sleep(0.5)
 
-        temp = int(sensor.temperature())
-        humid = int(sensor.humidity())
+        temp = sensor.temperature()
+        humid = sensor.humidity()
 
         print("===================")
         print("Temp:", temp)
@@ -91,8 +91,8 @@ while True:
         # =========================
 
         try:
-            client.publish(MQTT_TOPIC_TEMP, str(temp), retain=False)
-            client.publish(MQTT_TOPIC_HUMID, str(humid), retain=False)
+            payload = ujson.dumps({"temperature": temp, "humidity": humid})
+            client.publish(MQTT_TOPIC_METRICS, payload, retain=False)
             print("Da publish MQTT!")
 
         except OSError as e:
@@ -100,8 +100,8 @@ while True:
             print("Dang reconnect MQTT...")
             try:
                 client = connect_mqtt()
-                client.publish(MQTT_TOPIC_TEMP, str(temp), retain=False)
-                client.publish(MQTT_TOPIC_HUMID, str(humid), retain=False)
+                payload = ujson.dumps({"temperature": temp, "humidity": humid})
+                client.publish(MQTT_TOPIC_METRICS, payload, retain=False)
                 print("Reconnect thanh cong!")
             except Exception as e:
                 print("Reconnect that bai:", e)

@@ -11,6 +11,8 @@ using Microsoft.Extensions.Logging;
 using MQTTnet;
 using MQTTnet.Client;
 using Backend.Data;
+using Microsoft.AspNetCore.SignalR;
+using Backend.Hubs;
 
 namespace Backend.Services
 {
@@ -22,15 +24,18 @@ namespace Backend.Services
         private readonly IMqttClient _mqttClient;
         private readonly MqttClientOptions _mqttClientOptions;
         private readonly MqttFactory _mqttFactory;
+        private readonly IHubContext<SensorHub> _hubContext;
 
         public MqttBackgroundService(
             ILogger<MqttBackgroundService> logger,
             IServiceScopeFactory scopeFactory,
-            IConfiguration configuration)
+            IConfiguration configuration,
+            IHubContext<SensorHub> hubContext)
         {
             _logger = logger;
             _scopeFactory = scopeFactory;
             _configuration = configuration;
+            _hubContext = hubContext;
 
             _mqttFactory = new MqttFactory();
             _mqttClient = _mqttFactory.CreateMqttClient();
@@ -93,7 +98,7 @@ namespace Backend.Services
         private async Task HandleMessageReceivedAsync(MqttApplicationMessageReceivedEventArgs args)
         {
             var topic = args.ApplicationMessage.Topic;
-            
+
             byte[] payloadBytes = args.ApplicationMessage.PayloadSegment.ToArray();
             var payloadString = Encoding.UTF8.GetString(payloadBytes);
 
@@ -101,9 +106,9 @@ namespace Backend.Services
 
             // Parse Topic: iot/devices/{deviceCode}/metrics
             var topicParts = topic.Split('/');
-            if (topicParts.Length != 4 || 
-                !string.Equals(topicParts[0], "iot", StringComparison.OrdinalIgnoreCase) || 
-                !string.Equals(topicParts[1], "devices", StringComparison.OrdinalIgnoreCase) || 
+            if (topicParts.Length != 4 ||
+                !string.Equals(topicParts[0], "iot", StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(topicParts[1], "devices", StringComparison.OrdinalIgnoreCase) ||
                 !string.Equals(topicParts[3], "metrics", StringComparison.OrdinalIgnoreCase))
             {
                 _logger.LogWarning("Skipping message. Topic format is invalid: {Topic}", topic);
@@ -194,7 +199,9 @@ namespace Backend.Services
                     dbContext.SensorMetrics.Add(metric);
                     await dbContext.SaveChangesAsync();
 
-                    _logger.LogInformation("Successfully saved metric for device {DeviceCode}: Temp={Temp}, Humid={Humid}", 
+                    await _hubContext.Clients.All.SendAsync("ReceiveSensorUpdate", deviceCode, metric);
+
+                    _logger.LogInformation("Successfully saved metric for device {DeviceCode}: Temp={Temp}, Humid={Humid}",
                         deviceCode, metric.Temperature, metric.Humidity);
                 }
                 catch (Exception ex)
@@ -207,7 +214,7 @@ namespace Backend.Services
         public override async Task StopAsync(CancellationToken cancellationToken)
         {
             _logger.LogInformation("Stopping MQTT Background Service...");
-            
+
             if (_mqttClient != null)
             {
                 try
