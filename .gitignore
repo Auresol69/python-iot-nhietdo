@@ -1,3 +1,22 @@
-.env
-bin
-Debug
+# Các thư mục cần bỏ qua
+bin/
+obj/
+.vs/
+.vscode/
+bin/
+obj/
+
+# Các file tạm và file người dùng
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Nếu có chạy database local (như SQLite hoặc file mdf)
+*.db
+*.db-journal
+*.mdf
+*.ldf
+
+# Các file log
+*.log
