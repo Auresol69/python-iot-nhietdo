@@ -5,6 +5,8 @@ obj/
 .vscode/
 bin/
 obj/
+.env
+plan.txt
 
 # Các file tạm và file người dùng
 *.user

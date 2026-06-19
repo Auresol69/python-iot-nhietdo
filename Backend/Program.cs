@@ -25,6 +25,13 @@ builder.Services.AddSignalR();
 // Add Controllers
 builder.Services.AddControllers();
 
+// Register Redis Cache
+var redisConnectionString = builder.Configuration.GetConnectionString("Redis") ?? "localhost:6379";
+builder.Services.AddStackExchangeRedisCache(options =>
+{
+    options.Configuration = redisConnectionString;
+});
+
 // Configure CORS to allow React frontend
 builder.Services.AddCors(options =>
 {

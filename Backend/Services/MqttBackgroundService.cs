@@ -13,6 +13,7 @@ using MQTTnet.Client;
 using Backend.Data;
 using Microsoft.AspNetCore.SignalR;
 using Backend.Hubs;
+using Microsoft.Extensions.Caching.Distributed;
 
 namespace Backend.Services
 {
@@ -25,17 +26,20 @@ namespace Backend.Services
         private readonly MqttClientOptions _mqttClientOptions;
         private readonly MqttFactory _mqttFactory;
         private readonly IHubContext<SensorHub> _hubContext;
+        private readonly IDistributedCache _cache;
 
         public MqttBackgroundService(
             ILogger<MqttBackgroundService> logger,
             IServiceScopeFactory scopeFactory,
             IConfiguration configuration,
-            IHubContext<SensorHub> hubContext)
+            IHubContext<SensorHub> hubContext,
+            IDistributedCache cache)
         {
             _logger = logger;
             _scopeFactory = scopeFactory;
             _configuration = configuration;
             _hubContext = hubContext;
+            _cache = cache;
 
             _mqttFactory = new MqttFactory();
             _mqttClient = _mqttFactory.CreateMqttClient();
@@ -190,7 +194,11 @@ namespace Backend.Services
                         try
                         {
                             await dbContext.SaveChangesAsync();
+                            // Invalidate devices list cache since a new device is auto-created
+                            await _cache.RemoveAsync("devices:list");
                         }
+                        // Trong môi trường thực tế chạy đa luồng, 2 gói tin MQTT bay vào cùng 1 mili-giây
+                        // có thể gây ra lỗi trùng khóa (Duplicate Key) do tính năng Auto-create 
                         catch (DbUpdateException)
                         {
                             // In case of parallel inserts causing duplicate key on unique index, re-fetch the device
@@ -224,6 +232,29 @@ namespace Backend.Services
 
                     dbContext.SensorMetrics.Add(metric);
                     await dbContext.SaveChangesAsync();
+
+                    // Update latest status in Redis
+                    try
+                    {
+                        var latestStatus = new DeviceLatestStatus
+                        {
+                            Temperature = metric.Temperature,
+                            Humidity = metric.Humidity,
+                            Timestamp = metric.Timestamp,
+                            IsOnline = device.IsOnline
+                        };
+                        var cacheOptions = new DistributedCacheEntryOptions
+                        {
+                            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5)
+                        };
+                        var serializedStatus = JsonSerializer.Serialize(latestStatus);
+                        await _cache.SetStringAsync($"device:{deviceCode}:latest_status", serializedStatus, cacheOptions);
+                        _logger.LogInformation("Successfully updated Redis cache for device {DeviceCode}: Temp={Temp}, Humid={Humid}", deviceCode, metric.Temperature, metric.Humidity);
+                    }
+                    catch (Exception cacheEx)
+                    {
+                        _logger.LogError(cacheEx, "Failed to update Redis cache for device {DeviceCode}", deviceCode);
+                    }
 
                     await _hubContext.Clients.All.SendAsync("ReceiveSensorUpdate", deviceCode, metric);
 
@@ -309,5 +340,13 @@ namespace Backend.Services
         public double Temperature { get; set; }
         public double Humidity { get; set; }
         public DateTime? Timestamp { get; set; }
+    }
+
+    public class DeviceLatestStatus
+    {
+        public double Temperature { get; set; }
+        public double Humidity { get; set; }
+        public DateTime Timestamp { get; set; }
+        public bool IsOnline { get; set; }
     }
 }
