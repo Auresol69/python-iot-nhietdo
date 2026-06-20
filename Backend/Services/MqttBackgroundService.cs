@@ -256,7 +256,15 @@ namespace Backend.Services
                         _logger.LogError(cacheEx, "Failed to update Redis cache for device {DeviceCode}", deviceCode);
                     }
 
-                    await _hubContext.Clients.All.SendAsync("ReceiveSensorUpdate", deviceCode, metric);
+                    // Đối tượng metric thuộc lớp SensorMetric (Entity Framework). 
+                    // Lớp này có thuộc tính liên kết ngược tới Device (public virtual Device? Device).
+                    //Lớp Device lại có danh sách liên kết tới toàn bộ SensorMetrics (public virtual ICollection<SensorMetric> SensorMetrics).
+                    await _hubContext.Clients.All.SendAsync("ReceiveSensorUpdate", deviceCode, new 
+                    { 
+                        temperature = metric.Temperature, 
+                        humidity = metric.Humidity, 
+                        timestamp = metric.Timestamp 
+                    });
 
                     _logger.LogInformation("Successfully saved metric for device {DeviceCode}: Temp={Temp}, Humid={Humid}",
                         deviceCode, metric.Temperature, metric.Humidity);
