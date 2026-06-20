@@ -1,6 +1,8 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
+import toast from "react-hot-toast";
 import { useSignalR } from "../hooks/useSignalR";
+import NotificationBell from "./NotificationBell";
 import {
   Activity,
   Cpu,
@@ -63,6 +65,9 @@ export default function Dashboard() {
   const [isSimulating, setIsSimulating] = useState(false);
   const simIntervalRef = useRef(null);
   const [simConsole, setSimConsole] = useState([]);
+
+  // Notification bell counter — incremented on each AnomalyDetected event to trigger re-fetch
+  const [newAlertCount, setNewAlertCount] = useState(0);
 
   // Fetch device list from API
   const fetchDevices = async () => {
@@ -187,11 +192,31 @@ export default function Dashboard() {
     }
   };
 
+  // Handle real-time anomaly detection alerts from SignalR
+  const handleAnomalyDetected = useCallback((alertPayload) => {
+    const { deviceCode, temperature, zScore, message } = alertPayload || {};
+    const label = deviceCode || "Unknown Device";
+
+    // Show a toast notification with full anomaly details
+    toast.error(
+      `⚠️ Anomaly on ${label}\n${temperature?.toFixed(2)}°C — Z-Score: ${zScore?.toFixed(3)}`,
+      {
+        id: `anomaly-${deviceCode}-${Date.now()}`,
+        duration: 8000,
+        icon: "🌡️",
+      }
+    );
+
+    // Trigger the NotificationBell to re-fetch alerts by bumping the counter
+    setNewAlertCount((prev) => prev + 1);
+  }, []);
+
   // SignalR connection hook
   const { isConnected: signalRConnected, connectionError: signalRError } = useSignalR(
     SIGNALR_HUB_URL,
     handleSensorUpdate,
-    handleDeviceOffline
+    handleDeviceOffline,
+    handleAnomalyDetected
   );
 
   // Handle virtual device creation
@@ -370,6 +395,10 @@ export default function Dashboard() {
 
       {/* Main Workspace */}
       <main className="flex-1 overflow-y-auto p-8 flex flex-col justify-start">
+        {/* Top bar with NotificationBell */}
+        <div className="flex justify-end mb-4">
+          <NotificationBell newAlertCount={newAlertCount} />
+        </div>
         {errorMsg && (
           <div className="mb-6 bg-red-950/40 border border-red-500/50 p-4 rounded-lg flex items-center gap-3 text-red-300">
             <AlertTriangle className="w-5 h-5 flex-shrink-0 text-red-500" />

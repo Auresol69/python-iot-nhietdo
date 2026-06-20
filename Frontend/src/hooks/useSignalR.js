@@ -3,13 +3,15 @@ import * as signalR from "@microsoft/signalr";
 
 /**
  * Custom hook to manage the SignalR connection lifecycle.
- * Handles automatic reconnects, logging, and callbacks for sensor updates and device offline events.
+ * Handles automatic reconnects, logging, and callbacks for sensor updates,
+ * device offline events, and anomaly detection alerts.
  * 
  * @param {string} hubUrl The URL of the SignalR hub.
  * @param {function} onSensorUpdate Callback for 'ReceiveSensorUpdate' event.
  * @param {function} onDeviceOffline Callback for 'DeviceOffline' event.
+ * @param {function} onAnomalyDetected Callback for 'AnomalyDetected' event.
  */
-export const useSignalR = (hubUrl, onSensorUpdate, onDeviceOffline) => {
+export const useSignalR = (hubUrl, onSensorUpdate, onDeviceOffline, onAnomalyDetected) => {
   const [isConnected, setIsConnected] = useState(false);
   const [connectionError, setConnectionError] = useState(null);
   const connectionRef = useRef(null);
@@ -17,11 +19,13 @@ export const useSignalR = (hubUrl, onSensorUpdate, onDeviceOffline) => {
   // Use refs to prevent recreating the SignalR event listeners when callbacks change.
   const onSensorUpdateRef = useRef(onSensorUpdate);
   const onDeviceOfflineRef = useRef(onDeviceOffline);
+  const onAnomalyDetectedRef = useRef(onAnomalyDetected);
 
   useEffect(() => {
     onSensorUpdateRef.current = onSensorUpdate;
     onDeviceOfflineRef.current = onDeviceOffline;
-  }, [onSensorUpdate, onDeviceOffline]);
+    onAnomalyDetectedRef.current = onAnomalyDetected;
+  }, [onSensorUpdate, onDeviceOffline, onAnomalyDetected]);
 
   useEffect(() => {
     if (!hubUrl) return;
@@ -46,6 +50,13 @@ export const useSignalR = (hubUrl, onSensorUpdate, onDeviceOffline) => {
     connection.on("DeviceOffline", (deviceCode) => {
       if (onDeviceOfflineRef.current) {
         onDeviceOfflineRef.current(deviceCode);
+      }
+    });
+
+    // New: Listen for anomaly detection alerts from the backend
+    connection.on("AnomalyDetected", (alertPayload) => {
+      if (onAnomalyDetectedRef.current) {
+        onAnomalyDetectedRef.current(alertPayload);
       }
     });
 

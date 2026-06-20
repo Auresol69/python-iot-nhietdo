@@ -27,19 +27,25 @@ namespace Backend.Services
         private readonly MqttFactory _mqttFactory;
         private readonly IHubContext<SensorHub> _hubContext;
         private readonly IDistributedCache _cache;
+        private readonly ZScoreAnomalyDetector _anomalyDetector;
+        private readonly DiscordAlertService _discordAlertService;
 
         public MqttBackgroundService(
             ILogger<MqttBackgroundService> logger,
             IServiceScopeFactory scopeFactory,
             IConfiguration configuration,
             IHubContext<SensorHub> hubContext,
-            IDistributedCache cache)
+            IDistributedCache cache,
+            ZScoreAnomalyDetector anomalyDetector,
+            DiscordAlertService discordAlertService)
         {
             _logger = logger;
             _scopeFactory = scopeFactory;
             _configuration = configuration;
             _hubContext = hubContext;
             _cache = cache;
+            _anomalyDetector = anomalyDetector;
+            _discordAlertService = discordAlertService;
 
             _mqttFactory = new MqttFactory();
             _mqttClient = _mqttFactory.CreateMqttClient();
@@ -232,6 +238,58 @@ namespace Backend.Services
 
                     dbContext.SensorMetrics.Add(metric);
                     await dbContext.SaveChangesAsync();
+
+                    // ── ANOMALY DETECTION BLOCK ────────────────────────────────────────────
+                    // Wrapped in its own try/catch so Discord/DB failures NEVER disrupt the
+                    // main MQTT pipeline. The Z-Score detector is fully thread-safe.
+                    try
+                    {
+                        bool isAnomaly = _anomalyDetector.IsAnomaly(
+                            deviceCode, payload.Temperature, out double zScore);
+
+                        if (isAnomaly)
+                        {
+                            _logger.LogWarning(
+                                "ANOMALY detected on {DeviceCode}! Temp={Temp:F2}°C, ZScore={ZScore:F4}",
+                                deviceCode, payload.Temperature, zScore);
+
+                            var alertMessage = $"Unusual temperature spike: {payload.Temperature:F2}°C " +
+                                              $"(Z-Score: {zScore:F4}, threshold: 3.0)";
+
+                            // 1. Persist alert to database
+                            var alert = new SensorAlert
+                            {
+                                DeviceCode = deviceCode,
+                                Message = alertMessage,
+                                Temperature = payload.Temperature,
+                                ZScore = zScore,
+                                Timestamp = metric.Timestamp,
+                                IsRead = false
+                            };
+                            dbContext.SensorAlerts.Add(alert);
+                            await dbContext.SaveChangesAsync();
+
+                            // 2. Send Discord webhook notification (fire-and-forget with timeout)
+                            _ = _discordAlertService.SendAnomalyAlertAsync(
+                                    deviceCode, payload.Temperature, zScore);
+
+                            // 3. Broadcast AnomalyDetected event to all SignalR clients
+                            await _hubContext.Clients.All.SendAsync("AnomalyDetected", new
+                            {
+                                deviceCode,
+                                temperature = payload.Temperature,
+                                zScore,
+                                message = alertMessage,
+                                timestamp = metric.Timestamp
+                            });
+                        }
+                    }
+                    catch (Exception anomalyEx)
+                    {
+                        _logger.LogError(anomalyEx,
+                            "Error in anomaly detection pipeline for device {DeviceCode}.", deviceCode);
+                    }
+                    // ── END ANOMALY DETECTION BLOCK ───────────────────────────────────────
 
                     // Update latest status in Redis
                     try

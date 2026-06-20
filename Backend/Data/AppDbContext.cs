@@ -8,6 +8,7 @@ namespace Backend.Data
 
         public DbSet<Device> Devices { get; set; }
         public DbSet<SensorMetric> SensorMetrics { get; set; }
+        public DbSet<SensorAlert> SensorAlerts { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -24,6 +25,14 @@ namespace Backend.Data
             modelBuilder.Entity<Device>()
                 .HasIndex(d => d.DeviceCode)
                 .IsUnique();
+
+            // Index phức hợp để truy vấn alert theo thiết bị + thời gian cực nhanh
+            modelBuilder.Entity<SensorAlert>()
+                .HasIndex(a => new { a.DeviceCode, a.Timestamp });
+
+            // Index riêng cho IsRead để lọc cảnh báo chưa đọc nhanh
+            modelBuilder.Entity<SensorAlert>()
+                .HasIndex(a => a.IsRead);
         }
     }
 }

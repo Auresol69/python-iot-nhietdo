@@ -32,6 +32,15 @@ builder.Services.AddStackExchangeRedisCache(options =>
     options.Configuration = redisConnectionString;
 });
 
+// Register HttpClient factory (used by DiscordAlertService)
+builder.Services.AddHttpClient();
+
+// Register ZScoreAnomalyDetector as Singleton (holds in-memory sliding window state per device)
+builder.Services.AddSingleton<ZScoreAnomalyDetector>();
+
+// Register DiscordAlertService as Singleton (stateless, uses IHttpClientFactory)
+builder.Services.AddSingleton<DiscordAlertService>();
+
 // Configure CORS to allow React frontend
 builder.Services.AddCors(options =>
 {
